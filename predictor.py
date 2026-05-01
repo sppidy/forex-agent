@@ -9,6 +9,7 @@ The model improves over time as more data is collected from paper trading.
 """
 
 import os
+import hmac
 import pickle
 import hashlib
 import numpy as np
@@ -37,6 +38,46 @@ def _sha256_file(path: str) -> str:
         for chunk in iter(lambda: f.read(8192), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _hmac_file(path: str, secret: bytes) -> str:
+    h = hmac.new(secret, digestmod=hashlib.sha256)
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _verify_pickle_integrity(model_path: str, sha_path: str) -> bool:
+    """Authenticate the pickle. If MODEL_HMAC_SECRET env var is set the .hmac
+    sidecar is required (tamper-resistant). Otherwise fall back to plain
+    SHA-256 (corruption-only).
+    """
+    secret_str = os.environ.get("MODEL_HMAC_SECRET", "")
+    hmac_path = model_path + ".hmac"
+    if secret_str:
+        if not os.path.exists(hmac_path):
+            logger.error(
+                "MODEL_HMAC_SECRET set but %s missing — refusing to load. "
+                "Re-train to regenerate.", hmac_path,
+            )
+            return False
+        expected = Path(hmac_path).read_text(encoding="utf-8").strip()
+        actual = _hmac_file(model_path, secret_str.encode("utf-8"))
+        if not hmac.compare_digest(expected, actual):
+            logger.error("HMAC mismatch on %s — refusing to load.", model_path)
+            return False
+        return True
+
+    logger.warning(
+        "MODEL_HMAC_SECRET not set; pickle integrity is corruption-only. "
+        "Set MODEL_HMAC_SECRET in .env for tamper resistance."
+    )
+    if not os.path.exists(sha_path):
+        return True
+    expected = Path(sha_path).read_text(encoding="utf-8").strip()
+    actual = _sha256_file(model_path)
+    return expected == actual
 
 
 def _get_training_log() -> list[dict]:
@@ -272,6 +313,11 @@ def train_model(symbols: list[str] | None = None, period: str = "1y") -> dict:
         model_hash = _sha256_file(model_path)
         with open(MODEL_HASH_FILE, "w", encoding="utf-8") as f:
             f.write(model_hash)
+        # If MODEL_HMAC_SECRET is set, also write a tamper-resistant HMAC sidecar.
+        secret_str = os.environ.get("MODEL_HMAC_SECRET", "")
+        if secret_str:
+            with open(model_path + ".hmac", "w", encoding="utf-8") as f:
+                f.write(_hmac_file(model_path, secret_str.encode("utf-8")))
         promote_model = True
     else:
         model_hash = prev_metrics.get("model_sha256", "")
@@ -315,12 +361,7 @@ def predict(symbol: str, df: pd.DataFrame) -> dict:
     model_path = os.path.join(MODEL_DIR, "predictor.pkl")
     if not os.path.exists(model_path):
         return {"symbol": symbol, "error": "No trained model. Run: python main.py train"}
-    if not os.path.exists(MODEL_HASH_FILE):
-        return {"symbol": symbol, "error": "Model integrity file missing. Re-train model."}
-
-    expected_hash = Path(MODEL_HASH_FILE).read_text(encoding="utf-8").strip()
-    actual_hash = _sha256_file(model_path)
-    if expected_hash != actual_hash:
+    if not _verify_pickle_integrity(model_path, MODEL_HASH_FILE):
         return {"symbol": symbol, "error": "Model integrity check failed. Re-train model."}
 
     with open(model_path, "rb") as f:
