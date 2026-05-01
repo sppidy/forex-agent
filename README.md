@@ -1,6 +1,6 @@
 # forex-agent
 
-Paper-trading agent for FX majors + commodities. Part of [`trading-agent`](https://github.com/sppidy/trading-agent).
+Paper-trading agent for FX majors + commodities. Part of [`janus`](https://github.com/sppidy/janus).
 
 - ICT-style strategies: Asian Sweep + CISD detection, London breakout, killzone reversals
 - 15-minute candles, FX majors + cross pairs + gold/silver
@@ -36,4 +36,4 @@ python main.py help
 
 ## License
 
-[Apache-2.0](LICENSE). Contributing guidelines and security policy live in the [super-repo](https://github.com/sppidy/trading-agent).
+[Apache-2.0](LICENSE). Contributing guidelines and security policy live in the [super-repo](https://github.com/sppidy/janus).
